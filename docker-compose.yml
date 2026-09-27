@@ -1,0 +1,136 @@
+name: launchpad
+
+networks:
+  default:
+    name: ${DOCKER_NETWORK:-deploy-net}
+    external: true
+
+volumes:
+  postgres-data:
+  nginx-conf:
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-launchpad}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-launchpad}
+      POSTGRES_DB: ${POSTGRES_DB:-launchpad}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-launchpad}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      # Fixed inside the container — only the host-side published port (below) varies
+      # per developer. Mixing the two up makes the publish mapping point at nothing.
+      API_PORT: "4000"
+      DATABASE_URL: postgresql://${POSTGRES_USER:-launchpad}:${POSTGRES_PASSWORD:-launchpad}@postgres:5432/${POSTGRES_DB:-launchpad}
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      DASHBOARD_ORIGIN: ${DASHBOARD_ORIGIN:-http://localhost:5173}
+      # Read-only here: the api only builds the deploy URLs it serializes to the dashboard.
+      # The worker uses the same two values to render nginx server_names, and both go
+      # through deployHosts() in packages/shared so they cannot drift apart.
+      DEPLOY_DOMAIN: ${DEPLOY_DOMAIN:-127.0.0.1.nip.io}
+      TLS_ENABLED: ${TLS_ENABLED:-false}
+      # Docker Desktop's Windows bind-mount layer doesn't forward inotify events into the
+      # container, so tsx's chokidar-based watcher never fires on a host-side edit without
+      # this — it would otherwise silently keep serving stale code after every save.
+      CHOKIDAR_USEPOLLING: "true"
+      CHOKIDAR_INTERVAL: "300"
+    ports:
+      - "${API_PORT:-4000}:4000"
+    volumes:
+      - ./apps/api/src:/repo/apps/api/src
+      - ./packages/shared/src:/repo/packages/shared/src
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nginx:
+        condition: service_started
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://${POSTGRES_USER:-launchpad}:${POSTGRES_PASSWORD:-launchpad}@postgres:5432/${POSTGRES_DB:-launchpad}
+      REDIS_URL: redis://redis:6379
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      DOCKER_NETWORK: ${DOCKER_NETWORK:-deploy-net}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+      DEPLOY_DOMAIN: ${DEPLOY_DOMAIN:-127.0.0.1.nip.io}
+      TLS_ENABLED: ${TLS_ENABLED:-false}
+      # Preview lifecycle: how many builds per preview branch stay reachable on their
+      # immutable URLs, how long a branch can go without a push before it's torn down,
+      # and how often the sweep runs.
+      PREVIEW_CONTAINERS_PER_BRANCH: ${PREVIEW_CONTAINERS_PER_BRANCH:-3}
+      STALE_PREVIEW_DAYS: ${STALE_PREVIEW_DAYS:-1}
+      CLEANUP_INTERVAL_MS: ${CLEANUP_INTERVAL_MS:-3600000}
+      CHOKIDAR_USEPOLLING: "true"
+      CHOKIDAR_INTERVAL: "300"
+    volumes:
+      # Grants effective host-level access — see the "Docker socket security" note in
+      # README.md and CLAUDE.md. Deliberate, not an oversight.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Read-only: lets the E2E script (scripts/e2e.sh) hand the worker a local git repo
+      # to clone without standing up a real GitHub-reachable remote.
+      - ./fixtures:/fixtures:ro
+      - ./apps/worker/src:/repo/apps/worker/src
+      - ./packages/shared/src:/repo/packages/shared/src
+      - ./apps/nginx-templates:/repo/apps/nginx-templates:ro
+      # Shared with the nginx service below: this is how a rendered server block written
+      # here becomes visible for nginx to `-t`/`-s reload` against.
+      - nginx-conf:/etc/nginx/conf.d
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    labels:
+      launchpad.managed: "true"
+      launchpad.role: nginx
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:80"
+      - "${NGINX_HTTPS_PORT:-443}:443"
+    volumes:
+      - nginx-conf:/etc/nginx/conf.d
+      # Unused until TLS_ENABLED=true and a real wildcard cert is placed here — see the
+      # "Deploy target" note in CLAUDE.md.
+      - ./certs:/etc/nginx/certs:ro
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

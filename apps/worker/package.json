@@ -1,0 +1,27 @@
+{
+  "name": "@launchpad/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@launchpad/shared": "*",
+    "bullmq": "^5.21.2",
+    "dockerode": "^4.0.2",
+    "dotenv": "^16.4.5",
+    "handlebars": "^4.7.8",
+    "tar-fs": "^3.0.6"
+  },
+  "devDependencies": {
+    "@types/dockerode": "^3.3.31",
+    "@types/node": "^22.9.0",
+    "@types/tar-fs": "^2.0.4",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}

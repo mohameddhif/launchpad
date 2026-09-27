@@ -1,0 +1,39 @@
+{
+  "name": "launchpad",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Self-hosted push-to-deploy CI/CD platform",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "docker compose up -d --build && npm run dev -w @launchpad/dashboard",
+    "dev:down": "docker compose down",
+    "dev:logs": "docker compose logs -f api worker",
+    "prod:up": "docker compose -f docker-compose.production.yml --profile tls up -d --build",
+    "prod:down": "docker compose -f docker-compose.production.yml down",
+    "prod:logs": "docker compose -f docker-compose.production.yml logs -f api worker nginx dashboard",
+    "build": "npm run build -w @launchpad/shared && npm run build -w @launchpad/api && npm run build -w @launchpad/worker && npm run build -w @launchpad/dashboard",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:generate": "prisma generate --schema packages/shared/prisma/schema.prisma",
+    "db:migrate": "prisma migrate dev --schema packages/shared/prisma/schema.prisma",
+    "db:deploy": "prisma migrate deploy --schema packages/shared/prisma/schema.prisma",
+    "db:studio": "prisma studio --schema packages/shared/prisma/schema.prisma",
+    "db:seed": "tsx scripts/seed.ts",
+    "e2e": "bash scripts/e2e.sh"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "tsx": "^4.19.2",
+    "vitest": "^2.1.4",
+    "prisma": "^5.21.1",
+    "dotenv": "^16.4.5",
+    "bcryptjs": "^2.4.3",
+    "@types/node": "^22.9.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "launchpad-sample-static",
+  "private": true,
+  "devDependencies": {
+    "vite": "^5.4.11"
+  },
+  "scripts": {
+    "build": "mkdir -p dist && echo '<!doctype html><html><body>hello from launchpad zero-config static</body></html>' > dist/index.html"
+  }
+}

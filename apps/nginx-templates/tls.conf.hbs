@@ -1,0 +1,23 @@
+{{#each targets}}
+server {
+    listen 80;
+    server_name{{#each serverNames}} {{this}}{{/each}};
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name{{#each serverNames}} {{this}}{{/each}};
+
+    ssl_certificate     /etc/nginx/certs/live/{{../domain}}/fullchain.pem;
+    ssl_certificate_key /etc/nginx/certs/live/{{../domain}}/privkey.pem;
+
+    location / {
+        proxy_pass http://{{containerName}}:{{internalPort}};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+{{/each}}

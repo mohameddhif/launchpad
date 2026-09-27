@@ -1,0 +1,150 @@
+generator client {
+  provider      = "prisma-client-js"
+  output        = "../generated/client"
+  // node:22-alpine ships OpenSSL 3; without this the query engine binary that
+  // Prisma generates by default (matched to the host's own libssl) fails to load
+  // inside the api/worker containers with "Error loading shared library libssl.so.1.1".
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+}
+
+model Project {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  repoUrl     String
+  productionBranch String @default("main")
+  /// Exact branch names (no globs) allowed to produce preview deployments.
+  previewBranches  String[] @default([])
+  internalPort Int     @default(3000)
+  healthPath  String   @default("/")
+
+  webhookSecretEnc String
+  repoTokenEnc     String?
+
+  currentDeploymentId String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  deployments Deployment[] @relation("ProjectDeployments")
+  envVars     EnvVar[]
+  branches    Branch[]
+}
+
+enum DeploymentStatus {
+  QUEUED
+  BUILDING
+  DEPLOYING
+  SUCCESS
+  FAILED
+  SUPERSEDED
+}
+
+enum DeploymentTrigger {
+  PUSH
+  MANUAL
+  ROLLBACK
+  PROMOTE
+}
+
+enum DeploymentEnvironment {
+  PRODUCTION
+  PREVIEW
+}
+
+/// Per-branch bookkeeping: allow-list membership, the staleness clock the cleanup sweep
+/// reads, and a pointer to the branch's newest successful deploy. Deliberately *not* the
+/// source of truth for nginx routing — that comes from Docker's live labeled containers.
+model Branch {
+  id        String  @id @default(cuid())
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  name        String
+  environment DeploymentEnvironment
+
+  latestDeploymentId String?
+  lastPushAt         DateTime @default(now())
+  deletedUpstream    Boolean  @default(false)
+  cleanedUpAt        DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, name])
+}
+
+model Deployment {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation("ProjectDeployments", fields: [projectId], references: [id], onDelete: Cascade)
+
+  branch        String
+  environment   DeploymentEnvironment @default(PREVIEW)
+  commitSha     String
+  commitMessage String?
+  imageTag      String?
+  containerName String?
+
+  status  DeploymentStatus  @default(QUEUED)
+  trigger DeploymentTrigger @default(PUSH)
+  error   String?
+
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+  /// Set when the container is torn down by preview capping or the staleness sweep.
+  /// Separate from `status`, which records the build outcome and never changes after.
+  containerRemovedAt DateTime?
+
+  logs DeploymentLog[]
+
+  @@index([projectId, startedAt])
+  @@index([projectId, branch, startedAt])
+}
+
+model DeploymentLog {
+  id           String     @id @default(cuid())
+  deploymentId String
+  deployment   Deployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+
+  seq       Int
+  stream    String
+  message   String
+  createdAt DateTime @default(now())
+
+  @@unique([deploymentId, seq])
+  @@index([deploymentId, seq])
+}
+
+enum EnvVarEnvironment {
+  PRODUCTION
+  PREVIEW
+  ALL
+}
+
+model EnvVar {
+  id        String  @id @default(cuid())
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  key         String
+  valueEnc    String
+  environment EnvVarEnvironment @default(ALL)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, key, environment])
+}
